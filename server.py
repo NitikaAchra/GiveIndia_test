@@ -32,6 +32,7 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
                 "PUT":  {"total": 0, "response_time":0}, 
                 "DELETE": {"total": 0, "response_time":0}}
     request_list = SLinkedList()
+    active = {"GET":0,"POST":0,"PUT":0,"DELETE":0}
 
     def insert_node(self,request_data):
         request_node = Node(request_data)
@@ -60,7 +61,7 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
         return response
 
     def get_stats(self):
-        result = {"Total":{},"Last_hour":{},"Last_minute":{}}
+        result = {"Total":{},"Last_hour":{},"Last_minute":{}, "Active":{}}
         requests = ["GET","POST","PUT","DELETE"]
         now = time.time()
         list_current = self.request_list.head
@@ -100,6 +101,7 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
             result["Last_minute"][request_type] = {"Total_requests ": self.last_minute[request_type]["total"], 
                         "Average_responsetime ": average_response
                         }
+            result["Active"][request_type] = self.active[request_type]
 
         return result
 
@@ -109,6 +111,7 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
         self.total["GET"]["total"] += 1
         self.last_hour["GET"]["total"] += 1
         self.last_minute["GET"]["total"] += 1
+        self.active["GET"] +=1
         start = time.time()
         time.sleep(15)
         header = self.headers
@@ -132,12 +135,14 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
                     "arrival_time": start
                     }
         self.insert_node(this_request)
+        self.active["GET"] -=1
        
 
     def do_POST(self):
         self.total["POST"]["total"] += 1
         self.last_hour["POST"]["total"] += 1
         self.last_minute["POST"]["total"] += 1
+        self.active["POST"] +=1
         start = time.time()
         time.sleep(15)
         content_length = int(self.headers['Content-Length'])
@@ -162,11 +167,13 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
                     "arrival_time": start
                     }
         self.insert_node(this_request)
+        self.active["POST"] -=1
 
     def do_PUT(self):
         self.total["PUT"]["total"] += 1
         self.last_hour["PUT"]["total"] += 1
         self.last_minute["PUT"]["total"] += 1
+        self.active["PUT"] +=1
         now = datetime.datetime.now()
         start = time.time()
         time.sleep(15)
@@ -192,11 +199,13 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
                     "arrival_time": start
                     }
         self.insert_node(this_request)
+        self.active["PUT"] -=1
 
     def do_DELETE(self):
         self.total["DELETE"]["total"] += 1
         self.last_hour["DELETE"]["total"] += 1
         self.last_minute["DELETE"]["total"] += 1
+        self.active["DELETE"] +=1
         now = datetime.datetime.now()
         start = time.time()
         time.sleep(15)
@@ -222,6 +231,7 @@ class HTTPRequestHandler(BaseHTTPRequestHandler):
                     "arrival_time": start
                     }
         self.insert_node(this_request)
+        self.active["DELETE"] -=1
 
 httpd = HTTPServer(('localhost', 8080), HTTPRequestHandler)
 httpd.serve_forever()
