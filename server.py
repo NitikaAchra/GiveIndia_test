@@ -1,9 +1,12 @@
-from BaseHTTPServer import HTTPServer, BaseHTTPRequestHandler
-import json
+from flask import jsonify
+from flask import Flask, url_for
+from flask import request
+from flask import Response
 import datetime
 import time
 from urlparse import urlparse
-import re
+app = Flask(__name__)
+
 
 class Node:
     def __init__(self, dataval=None):
@@ -15,223 +18,128 @@ class SLinkedList:
         self.head = None
         self.tail = None
 
+total = {"GET":  {"total": 0, "response_time":0}, 
+        "POST": {"total": 0, "response_time":0}, 
+        "PUT":  {"total": 0, "response_time":0}, 
+        "DELETE": {"total": 0, "response_time":0}}
+last_hour = {"GET":  {"total": 0, "response_time":0}, 
+            "POST": {"total": 0, "response_time":0}, 
+            "PUT":  {"total": 0, "response_time":0}, 
+            "DELETE": {"total": 0, "response_time":0}}
+last_minute = {"GET":  {"total": 0, "response_time":0}, 
+            "POST": {"total": 0, "response_time":0}, 
+            "PUT":  {"total": 0, "response_time":0}, 
+            "DELETE": {"total": 0, "response_time":0}}
+request_list = SLinkedList()
+active = {"GET":0,"POST":0,"PUT":0,"DELETE":0}
 
 
-class HTTPRequestHandler(BaseHTTPRequestHandler):
+def insert_node(request_data):
+    request_node = Node(request_data)
+    if(request_list.head == None):
+        request_list.head = request_node
+        request_list.tail = request_node
+    else:
+        request_list.tail.next = request_node
+        request_list.tail = request_list.tail.next
 
-    total = {"GET":  {"total": 0, "response_time":0}, 
-             "POST": {"total": 0, "response_time":0}, 
-             "PUT":  {"total": 0, "response_time":0}, 
-             "DELETE": {"total": 0, "response_time":0}}
-    last_hour = {"GET":  {"total": 0, "response_time":0}, 
-                "POST": {"total": 0, "response_time":0}, 
-                "PUT":  {"total": 0, "response_time":0}, 
-                "DELETE": {"total": 0, "response_time":0}}
-    last_minute = {"GET":  {"total": 0, "response_time":0}, 
-                "POST": {"total": 0, "response_time":0}, 
-                "PUT":  {"total": 0, "response_time":0}, 
-                "DELETE": {"total": 0, "response_time":0}}
-    request_list = SLinkedList()
-    active = {"GET":0,"POST":0,"PUT":0,"DELETE":0}
+def get_stats():
+    result = {"Total":{},"Last_hour":{},"Last_minute":{}, "Active":{}}
+    requests = ["GET","POST","PUT","DELETE"]
+    now = time.time()
+    list_current = request_list.head
+    list_prev = None
 
-    def insert_node(self,request_data):
-        request_node = Node(request_data)
-        if(self.request_list.head == None):
-            self.request_list.head = request_node
-            self.request_list.tail = request_node
-        else:
-            self.request_list.tail.next = request_node
-            self.request_list.tail = self.request_list.tail.next
+    while list_current != None:
+        current_request = list_current.dataval
+        next_request = list_current.next
+        request_arrival = current_request["arrival_time"]
+        request_type = current_request["type"]
+        request_responsetime = current_request["response_time"]
+        if ((now - request_arrival) > 3600) :
+            last_hour[request_type]["total"] -= 1
+            last_hour[request_type]["response_time"] -= request_responsetime
+            if(list_prev != None):
+                list_prev.next = list_current.next
+            else:
+                request_list.head = next_request
+        if((now - request_arrival) > 60):
+            last_minute[request_type]["total"] -= 1
+            last_minute[request_type]["response_time"] -= request_responsetime
+        list_prev = list_current
+        list_current = next_request
+
+    for request_type in requests:
+        average_response = 0 if not total[request_type]["total"] else (total[request_type]["response_time"]/ total[request_type]["total"])
+        result["Total"][request_type] = {"Total_requests ": total[request_type]["total"], 
+                    "Average_responsetime ": average_response
+                    }
+
+        average_response = 0 if not last_hour[request_type]["total"] else (last_hour[request_type]["response_time"]/ last_hour[request_type]["total"])
+        result["Last_hour"][request_type] = {"Total_requests ": last_hour[request_type]["total"], 
+                    "Average_responsetime ": average_response
+                    }
+
+        average_response = 0 if not last_minute[request_type]["total"] else (last_minute[request_type]["response_time"]/ last_minute[request_type]["total"])
+        result["Last_minute"][request_type] = {"Total_requests ": last_minute[request_type]["total"], 
+                    "Average_responsetime ": average_response
+                    }
+        result["Active"][request_type] = active[request_type]
+    return result
+
+@app.errorhandler(404)
+def not_found(error=None):
+    message = {
+            'status': 404,
+            'message': 'Not Found: ' + request.url,
+    }
+    resp = jsonify(message)
+    resp.status_code = 404
+    return resp
     
-    def toJSON(self,response):
-        return json.dumps(response,default=lambda x: getattr(x, '__dict__', str(x)),
-            sort_keys=True, indent=4)
+
+@app.route('/stats', methods = ['GET', 'POST', 'PUT'])
+def api_stats():
+    stats = get_stats()
+    resp = jsonify(stats)
+    resp.status_code = 200
+    return resp
 
 
-    def create_response(self,header,body,path,method):
-        response = {}
-        if(re.search("^/process*", path)):
-            query = urlparse(self.path).query
-            query_components = {}
-            if(query):
-                query_components = dict(qc.split("=") for qc in query.split("&"))
-            response = {"timestamp": str(datetime.datetime.now()), "method": method, "path": path, "header": header, "body": body, "query": query_components, "duration": 15}
-        elif(re.search("^/stats$", path)):
-            response = self.get_stats()   
-        return response
+@app.route('/process/', methods = ['GET', 'POST', 'PUT', 'DELETE'])
+def api_process():
+    start = time.time()
+    time.sleep(15)
+    total[request.method]["total"] += 1
+    last_hour[request.method]["total"] += 1
+    last_minute[request.method]["total"] += 1
+    active[request.method] +=1
+    query_components = {}
+    query = urlparse(request.url).query
+    if(query):
+        query_components = dict(qc.split("=") for qc in query.split("&"))
+    response = {"timestamp": str(datetime.datetime.now()), 
+                "method": request.method, 
+                "path": request.path, 
+                #"header": request.headers, 
+                "body": request.data, 
+                "query": query_components, 
+                "duration": 15}
+    resp = jsonify(response)
+    resp.status_code = 200
+    response_time = time.time() - start
+    total[request.method]["response_time"] += response_time
+    last_hour[request.method]["response_time"] += response_time
+    last_minute[request.method]["response_time"] += response_time
+    this_request =	{
+            "type": request.method,
+            "response_time": response_time,
+            "arrival_time": start
+            }
+    insert_node(this_request)
+    active[request.method] -=1
+    return resp
+    
 
-    def get_stats(self):
-        result = {"Total":{},"Last_hour":{},"Last_minute":{}, "Active":{}}
-        requests = ["GET","POST","PUT","DELETE"]
-        now = time.time()
-        list_current = self.request_list.head
-        list_prev = None
-
-        while list_current != None:
-            current_request = list_current.dataval
-            next_request = list_current.next
-            request_arrival = current_request["arrival_time"]
-            request_type = current_request["type"]
-            request_responsetime = current_request["response_time"]
-            if ((now - request_arrival) > 3600) :
-                self.last_hour[request_type]["total"] -= 1
-                self.last_hour[request_type]["response_time"] -= request_responsetime
-                if(list_prev != None):
-                    list_prev.next = list_current.next
-                else:
-                    self.request_list.head = next_request
-            if((now - request_arrival) > 60):
-                self.last_minute[request_type]["total"] -= 1
-                self.last_minute[request_type]["response_time"] -= request_responsetime
-            list_prev = list_current
-            list_current = next_request
-
-        for request_type in requests:
-            average_response = 0 if not self.total[request_type]["total"] else (self.total[request_type]["response_time"]/ self.total[request_type]["total"])
-            result["Total"][request_type] = {"Total_requests ": self.total[request_type]["total"], 
-                        "Average_responsetime ": average_response
-                        }
-
-            average_response = 0 if not self.last_hour[request_type]["total"] else (self.last_hour[request_type]["response_time"]/ self.last_hour[request_type]["total"])
-            result["Last_hour"][request_type] = {"Total_requests ": self.last_hour[request_type]["total"], 
-                        "Average_responsetime ": average_response
-                        }
-
-            average_response = 0 if not self.last_minute[request_type]["total"] else (self.last_minute[request_type]["response_time"]/ self.last_minute[request_type]["total"])
-            result["Last_minute"][request_type] = {"Total_requests ": self.last_minute[request_type]["total"], 
-                        "Average_responsetime ": average_response
-                        }
-            result["Active"][request_type] = self.active[request_type]
-
-        return result
-
-
-
-    def do_GET(self):
-        self.total["GET"]["total"] += 1
-        self.last_hour["GET"]["total"] += 1
-        self.last_minute["GET"]["total"] += 1
-        self.active["GET"] +=1
-        start = time.time()
-        time.sleep(15)
-        header = self.headers
-        path = self.path
-        response_data = self.create_response(header,"",self.path,"GET")
-        if  not response_data:
-            self.send_response(400)
-            self.end_headers()
-            self.wfile.write("PATH NOT FOUND")
-        else:
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(self.toJSON(response_data))
-        response_time = time.time() - start
-        self.total["GET"]["response_time"] += response_time
-        self.last_hour["GET"]["response_time"] += response_time
-        self.last_minute["GET"]["response_time"] += response_time
-        this_request =	{
-                    "type": "GET",
-                    "response_time": response_time,
-                    "arrival_time": start
-                    }
-        self.insert_node(this_request)
-        self.active["GET"] -=1
-       
-
-    def do_POST(self):
-        self.total["POST"]["total"] += 1
-        self.last_hour["POST"]["total"] += 1
-        self.last_minute["POST"]["total"] += 1
-        self.active["POST"] +=1
-        start = time.time()
-        time.sleep(15)
-        content_length = int(self.headers['Content-Length'])
-        header = self.headers
-        body = self.rfile.read(content_length)
-        response_data = self.create_response(header,body,self.path,"POST")
-        if  not response_data:
-            self.send_response(400)
-            self.end_headers()
-            self.wfile.write("PATH NOT FOUND")
-        else:
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(self.toJSON(response_data))
-        response_time = time.time() - start
-        self.total["POST"]["response_time"] += response_time
-        self.last_hour["POST"]["response_time"] += response_time
-        self.last_minute["POST"]["response_time"] += response_time
-        this_request =	{
-                    "type": "POST",
-                    "response_time": response_time,
-                    "arrival_time": start
-                    }
-        self.insert_node(this_request)
-        self.active["POST"] -=1
-
-    def do_PUT(self):
-        self.total["PUT"]["total"] += 1
-        self.last_hour["PUT"]["total"] += 1
-        self.last_minute["PUT"]["total"] += 1
-        self.active["PUT"] +=1
-        now = datetime.datetime.now()
-        start = time.time()
-        time.sleep(15)
-        content_length = int(self.headers['Content-Length'])
-        header = self.headers
-        body = self.rfile.read(content_length)
-        response_data = self.create_response(header,body,self.path,"PUT")
-        if  not response_data:
-            self.send_response(400)
-            self.end_headers()
-            self.wfile.write("PATH NOT FOUND")
-        else:
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(self.toJSON(response_data))
-        response_time = time.time() - start
-        self.total["PUT"]["response_time"] += response_time
-        self.last_hour["PUT"]["response_time"] += response_time
-        self.last_minute["PUT"]["response_time"] += response_time
-        this_request =	{
-                    "type": "PUT",
-                    "response_time": response_time,
-                    "arrival_time": start
-                    }
-        self.insert_node(this_request)
-        self.active["PUT"] -=1
-
-    def do_DELETE(self):
-        self.total["DELETE"]["total"] += 1
-        self.last_hour["DELETE"]["total"] += 1
-        self.last_minute["DELETE"]["total"] += 1
-        self.active["DELETE"] +=1
-        now = datetime.datetime.now()
-        start = time.time()
-        time.sleep(15)
-        content_length = int(self.headers['Content-Length'])
-        header = self.headers
-        body = self.rfile.read(content_length)
-        response_data = self.create_response(header,body,self.path,"DELETE")
-        if  not response_data:
-            self.send_response(400)
-            self.end_headers()
-            self.wfile.write("PATH NOT FOUND")
-        else:
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(self.toJSON(response_data))
-        response_time = time.time() - start
-        self.total["DELETE"]["response_time"] += response_time
-        self.last_hour["DELETE"]["response_time"] += response_time
-        self.last_minute["DELETE"]["response_time"] += response_time
-        this_request =	{
-                    "type": "DELETE",
-                    "response_time": response_time,
-                    "arrival_time": start
-                    }
-        self.insert_node(this_request)
-        self.active["DELETE"] -=1
-
-httpd = HTTPServer(('localhost', 8080), HTTPRequestHandler)
-httpd.serve_forever()
+if __name__ == '__main__':
+    app.run()
